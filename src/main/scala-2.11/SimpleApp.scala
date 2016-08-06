@@ -2,6 +2,7 @@
 import org.apache.spark.SparkContext
 import org.apache.spark.SparkContext._
 import org.apache.spark.SparkConf
+import java.io._
 
 object SimpleApp {
 
@@ -126,10 +127,12 @@ object SimpleApp {
     val postsFile = args(0)
     val votesFile = args(1)
 
-    val conf = new SparkConf().setAppName("Simple Application")
+    val conf = new SparkConf()
+      .setAppName("Simple Application")
+      .setMaster("local[2]")
     val sc = new SparkContext(conf)
 
-    val posts = sc.textFile(postsFile, minPartitions=2)
+    lazy val posts = sc.textFile(postsFile, minPartitions=2)
       .filter(_.contains("<row "))
       .map(postParser(_))
 
@@ -163,10 +166,19 @@ object SimpleApp {
         (value1 + value2, count1 + count2)
       })
       .mapValues({ case (values, counts) => values / counts.toDouble })
-      .takeOrdered(50)
 
-    votesByPost foreach println
+    // votesByPost.saveAsTextFile("tmp/votesByPost")
 
+    val upvotePctByFavorites = votesByPost takeOrdered 50
+    upvotePctByFavorites foreach println
+
+
+    val file = new File("tmp/upvotePctByFavorites.csv")
+    val bw = new BufferedWriter(new FileWriter(file))
+    for (x <- upvotePctByFavorites) {
+      bw.write(x._1.toString + "," + x._2.toString + "\n")
+    }
+    bw.close()
   }
 
 }
