@@ -118,44 +118,53 @@ object SimpleApp {
     loop(line.split("\\s+").toList, "", 0)
   }
 
+  object SparkContextManager {
+    val conf = new SparkConf()
+      .setAppName("Simple Application")
+      .setMaster("local[2]")
+    val sc = new SparkContext(conf)
+  }
 
   def main(args: Array[String]) {
     if (args.length != 2) {
       System.err.println("Requires exactly two inputs")
       System.exit(1)
     }
+    val debug = false
+
     val postsFile = args(0)
     val votesFile = args(1)
 
-    val conf = new SparkConf()
-      .setAppName("Simple Application")
-      .setMaster("local[2]")
-    val sc = new SparkContext(conf)
 
-    lazy val posts = sc.textFile(postsFile, minPartitions=2)
+    lazy val posts = SparkContextManager.sc.textFile(postsFile,
+      minPartitions = 2)
       .filter(_.contains("<row "))
       .map(postParser(_))
 
-    val votes = sc.textFile(votesFile, minPartitions=2)
+    lazy val votes = SparkContextManager.sc.textFile(votesFile,
+      minPartitions = 2)
       .filter(_.contains("<row "))
       .map(voteParser(_))
 
-    println(("#" * 80 + "\nTotal Posts: %s, Total Votes: %s")
-      .format(posts.count(), votes.count()))
+    if (debug) {
+      println(("#" * 80 + "\nTotal Posts: %s, Total Votes: %s")
+        .format(posts.count(), votes.count()))
+    }
 
-    val voteSummary0 = votes.reduce(_ + _)
-
-    println(("#" * 80 + "\nTotal UpVotes: %s, Total DownVotes: %s")
-      .format(voteSummary0.ups, voteSummary0.downs))
+    if (debug) {
+      val voteSummary0 = votes.reduce(_ + _)
+      println(("#" * 80 + "\nTotal UpVotes: %s, Total DownVotes: %s")
+        .format(voteSummary0.ups, voteSummary0.downs))
+    }
 
     val initialCount = (0,0.0)
     val votesByPost =
-      posts.map(t => (t.id, t.favs)).join(
-        votes.map(t => (t.postid, (t.ups, t.downs)))
+      posts.map(p => (p.id, p)).join(
+        votes.map(v => (v.postid, v))
       )
       .map({
-        case (id: String, (favs: Int, (ups: Int, downs: Int))) =>
-          (id, new OutRecord(favs, ups, downs))
+        case (id: String, (post, vote)) =>
+          (id, new OutRecord(post.favs, vote.ups, vote.downs))
       })
       .filter({ case (_: String, r: OutRecord) => r.ups > 0 | r.downs > 0 })
       .reduceByKey(_ + _)
@@ -170,8 +179,6 @@ object SimpleApp {
     // votesByPost.saveAsTextFile("tmp/votesByPost")
 
     val upvotePctByFavorites = votesByPost takeOrdered 50
-    upvotePctByFavorites foreach println
-
 
     val file = new File("tmp/upvotePctByFavorites.csv")
     val bw = new BufferedWriter(new FileWriter(file))
@@ -179,6 +186,8 @@ object SimpleApp {
       bw.write(x._1.toString + "," + x._2.toString + "\n")
     }
     bw.close()
-  }
 
+
+    SparkContextManager.sc.stop()
+  }
 }
