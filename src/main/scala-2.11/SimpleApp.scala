@@ -118,6 +118,15 @@ object SimpleApp {
     loop(line.split("\\s+").toList, "", 0)
   }
 
+  def outputWriter[T](fName: String, seq: Seq[T])(f: T => String): Unit = {
+    val file = new File(fName)
+    val bw = new BufferedWriter(new FileWriter(file))
+    for (x <- seq) {
+      bw.write(f(x))
+    }
+    bw.close()
+  }
+
   object SparkContextManager {
     val conf = new SparkConf()
       .setAppName("Simple Application")
@@ -125,16 +134,9 @@ object SimpleApp {
     val sc = new SparkContext(conf)
   }
 
-  def main(args: Array[String]) {
-    if (args.length != 2) {
-      System.err.println("Requires exactly two inputs")
-      System.exit(1)
-    }
+  def routine1(postsFile: String, votesFile: String): Unit = {
+
     val debug = false
-
-    val postsFile = args(0)
-    val votesFile = args(1)
-
 
     lazy val posts = SparkContextManager.sc.textFile(postsFile,
       minPartitions = 2)
@@ -162,31 +164,43 @@ object SimpleApp {
       posts.map(p => (p.id, p)).join(
         votes.map(v => (v.postid, v))
       )
-      .map({
-        case (id: String, (post, vote)) =>
-          (id, new OutRecord(post.favs, vote.ups, vote.downs))
-      })
-      .filter({ case (_: String, r: OutRecord) => r.ups > 0 | r.downs > 0 })
-      .reduceByKey(_ + _)
-      .map({ case (t: String, r: OutRecord) =>
-        (r.favs, (r.ups.toDouble / (r.ups + r.downs).toDouble, 1))
-      })
-      .reduceByKey({ case ((value1, count1), (value2, count2)) =>
-        (value1 + value2, count1 + count2)
-      })
-      .mapValues({ case (values, counts) => values / counts.toDouble })
+        .map({
+          case (id: String, (post, vote)) =>
+            (id, new OutRecord(post.favs, vote.ups, vote.downs))
+        })
+        .filter({ case (_: String, r: OutRecord) => r.ups > 0 | r.downs > 0 })
+        .reduceByKey(_ + _)
+        .map({ case (t: String, r: OutRecord) =>
+          (r.favs, (r.ups.toDouble / (r.ups + r.downs).toDouble, 1))
+        })
+        .reduceByKey({ case ((value1, count1), (value2, count2)) =>
+          (value1 + value2, count1 + count2)
+        })
+        .mapValues({ case (values, counts) => values / counts.toDouble })
 
-    // votesByPost.saveAsTextFile("tmp/votesByPost")
+    if (debug) {
+      votesByPost.saveAsTextFile("tmp/votesByPost")
+    }
 
     val upvotePctByFavorites = votesByPost takeOrdered 50
 
-    val file = new File("tmp/upvotePctByFavorites.csv")
-    val bw = new BufferedWriter(new FileWriter(file))
-    for (x <- upvotePctByFavorites) {
-      bw.write(x._1.toString + "," + x._2.toString + "\n")
-    }
-    bw.close()
+    outputWriter("tmp/upvotePctByFavorites.csv",
+      upvotePctByFavorites)({
+      case (k: Int, v: Double) => k.toString + "," + v.toString + ",\n"
+    })
 
+  }
+  def main(args: Array[String]) {
+    if (args.length != 2) {
+      System.err.println("Requires exactly two inputs")
+      System.exit(1)
+    }
+    val debug = false
+
+    val postsFile = args(0)
+    val votesFile = args(1)
+
+    routine1(postsFile, votesFile)
 
     SparkContextManager.sc.stop()
   }
