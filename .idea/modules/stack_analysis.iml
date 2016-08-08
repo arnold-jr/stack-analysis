@@ -151,5 +151,6 @@
     <orderEntry type="library" name="SBT: com.esotericsoftware:kryo-shaded:3.0.3:jar" level="project" />
     <orderEntry type="library" name="SBT: com.clearspring.analytics:stream:2.7.0:jar" level="project" />
     <orderEntry type="library" name="org.apache.spark:spark-core_2.11:2.0.0" level="project" />
+    <orderEntry type="library" name="org.apache.spark:spark-mllib_2.11:2.0.0" level="project" />
   </component>
 </module>
