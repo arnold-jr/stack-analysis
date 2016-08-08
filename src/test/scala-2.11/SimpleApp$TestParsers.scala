@@ -21,13 +21,14 @@ class SimpleApp$TestParsers extends FunSuite {
         |.&lt;/p&gt;&#xA;&#xA;&lt;p&gt;Obviously, randomly generating code
         |would
         |be impractical, so how could I do this?&lt;/p&gt;&#xA;"
-        |OwnerUserId="5" Las     tActivityDate="2014-05-14T00:36:31.077"
+        |OwnerUserId="5" LastActivityDate="2014-05-14T00:36:31.077"
         |Title="How can I do simple machine learning without hard-coding
         |behavior?" Tags="&lt;machine-learning&gt;"      AnswerCount="1"
         |CommentCount="1" FavoriteCount="1" ClosedDate="2014-05-14T14:40:25.950"
         | />""".stripMargin
 
-    assert(postParser(postLine) === new PostRecord("5",1))
+    assert(postParser(postLine) ===
+      new PostRecord("5", 1))
   }
 
   test("testVoteParser") {
