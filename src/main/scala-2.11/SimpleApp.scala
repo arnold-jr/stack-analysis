@@ -1,23 +1,11 @@
 /* SimpleApp.scala */
 
-import org.apache.spark.SparkContext
-import org.apache.spark.SparkContext._
 import org.apache.spark.ml.feature.Word2Vec
-import org.apache.spark.SparkConf
+import org.apache.spark.SparkContext
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.{SparkConf, SparkContext}
 import java.io._
 
-import org.apache.spark.sql.SparkSession
-
-/*
-val spark = SparkSession
-  .builder()
-  .appName("Spark SQL Example")
-  .config("spark.some.config.option", "some-value")
-  .getOrCreate()
-
-// For implicit conversions like converting RDDs to DataFrames
-import spark.implicits._
-*/
 
 import scala.xml._
 import scala.util.Try
@@ -167,22 +155,22 @@ object SimpleApp {
 
   def getUpvoteRatioByFavorites(postsFile: String, votesFile: String): Unit = {
 
-    lazy val posts = SparkContextManager.sc.textFile(postsFile,
+    lazy val posts = SparkContextSingleton.sc.textFile(postsFile,
       minPartitions = 2)
       .map(recordParser(_, "post"))
       .filter(_.isInstanceOf[PostRecord])
 
-    lazy val votes = SparkContextManager.sc.textFile(votesFile,
+    lazy val votes = SparkContextSingleton.sc.textFile(votesFile,
       minPartitions = 2)
       .map(recordParser(_, "vote"))
       .filter(_.isInstanceOf[VoteRecord])
 
-    if (SparkContextManager.debug) {
+    if (SparkContextSingleton.debug) {
       println(("#" * 80 + "\nTotal Posts: %s, Total Votes: %s")
         .format(posts.count(), votes.count()))
     }
 
-    if (SparkContextManager.debug) {
+    if (SparkContextSingleton.debug) {
       val voteSummary0 = votes.reduce(_ + _)
       println(("#" * 80 + "\nTotal UpVotes: %s, Total DownVotes: %s")
         .format(voteSummary0.ups, voteSummary0.downs))
@@ -194,7 +182,7 @@ object SimpleApp {
       posts.map(p => (p.postID, p)).join(
         votes.map(v => (v.postID, v))
       )
-    if (SparkContextManager.debug) {
+    if (SparkContextSingleton.debug) {
       votesAndPosts take 10 foreach println
     }
 
@@ -203,7 +191,7 @@ object SimpleApp {
         (id, (post.favs, vote.ups, vote.downs))
       })
 
-    if (SparkContextManager.debug) {
+    if (SparkContextSingleton.debug) {
       println("#" * 80 + "\n outRecordRDD")
       outRecordRDD take 10 foreach println
     }
@@ -211,7 +199,7 @@ object SimpleApp {
     val reducedOutRecordRDD = outRecordRDD
       .reduceByKey({ case (a, b) => (a._1 + b._1, a._2 + b._2, a._3 + b._3) })
 
-    if (SparkContextManager.debug) {
+    if (SparkContextSingleton.debug) {
       reducedOutRecordRDD take 10 foreach println
     }
 
@@ -237,40 +225,44 @@ object SimpleApp {
 
   }
 
-  def tagParser(line: String): Seq[String] = {
-    def parse = {
+  def tagParser(line: String): List[String] = {
+    def parse: List[String] = {
       val elem = XML.loadString(line)
-      val tags: Seq[String] = (elem \ "@Tags" text) split "><"
-      val out = tags map (_ stripPrefix "<" stripSuffix ">")
-      out
+      val tags: List[String] = (elem \ "@Tags" text) split "><" toList
+      val out = (tags map (_ stripPrefix "<" stripSuffix ">"))
+        .filter(_.length > 0)
+      if (out != Nil) out else List()
     }
-    Try(parse) getOrElse Seq()
+    Try(parse) getOrElse List()
   }
+
+  case class Tag(tags: Tuple1[List[String]])
 
   def synonyms(postsFile: String): Unit = {
 
-    lazy val tagsRDD = SparkContextManager.sc.textFile(postsFile,
+    val spark = SparkSessionSingleton.getInstance(SparkContextSingleton.conf)
+    import spark.implicits._
+
+    lazy val tagsRDD = SparkContextSingleton.sc.textFile(postsFile,
       minPartitions = 2)
       .map(tagParser)
-      .filter(_ != Seq())
-      .map(Tuple1.apply)
+      .filter(_ != Nil)
 
-    if (SparkContextManager.debug) {
-      tagsRDD take 10 foreach println
+    if (SparkContextSingleton.debug) {
+      tagsRDD take 100 foreach println
     }
+
+    lazy val tagsDF = tagsRDD
+      .map(tags => Tag(Tuple1.apply(tags)))
+      .toDF()
+
+    if (SparkContextSingleton.debug) {
+      tagsDF take 100 foreach println
+    }
+
   }
 
-  object SparkContextManager {
-    val conf = new SparkConf()
-      .setAppName("Simple Application")
-      .setMaster("local[*]")
-    val sc = new SparkContext(conf)
-    val debug = true
 
-    def setMaster(master: String) = conf.setMaster(master)
-
-    def stopSparkContext() = sc.stop()
-  }
 
   def main(args: Array[String]) {
     if (args.length != 4) {
@@ -282,13 +274,42 @@ object SimpleApp {
     val votesFile = args(2)
     val usersFile = args(3)
 
-    SparkContextManager.setMaster(args(0))
+    SparkContextSingleton.setMaster(args(0))
 
 
     // getUpvoteRatioByFavorites(postsFile, votesFile)
 
     synonyms(postsFile)
 
-    SparkContextManager.stopSparkContext()
+    SparkContextSingleton.stopSparkContext()
+  }
+
+  object SparkContextSingleton {
+    val conf = new SparkConf()
+      .setAppName("Simple Application")
+      .setMaster("local[*]")
+    val sc = new SparkContext(conf)
+    val debug = true
+
+    def setMaster(master: String) = conf.setMaster(master)
+
+    def stopSparkContext() = sc.stop()
+  }
+
+
+  /** Lazily instantiated singleton instance of SparkSession */
+  object SparkSessionSingleton {
+
+    @transient  private var instance: SparkSession = _
+
+    def getInstance(sparkConf: SparkConf): SparkSession = {
+      if (instance == null) {
+        instance = SparkSession
+          .builder
+          .config(sparkConf)
+          .getOrCreate()
+      }
+      instance
+    }
   }
 }
