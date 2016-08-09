@@ -27,7 +27,7 @@ class SimpleApp$TestParsers extends FunSuite {
         |CommentCount="1" FavoriteCount="1" ClosedDate="2014-05-14T14:40:25.950"
         | />""".stripMargin
 
-    assert(new PostRecord(postLine) ===
+    assert(PostRecord(postLine) ===
       new PostRecord("5", 1))
   }
 
@@ -36,7 +36,7 @@ class SimpleApp$TestParsers extends FunSuite {
       """<row Id="1" PostId="1" VoteTypeId="2"
         |CreationDate="2014-05-13T00:00:00.000" />""".stripMargin
 
-    assert(new VoteRecord(voteLine) === new VoteRecord("1", 1, 0))
+    assert(VoteRecord(voteLine) === new VoteRecord("1", 1, 0))
   }
 
   test("testUserParser") {

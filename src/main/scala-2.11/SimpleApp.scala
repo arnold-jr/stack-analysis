@@ -1,11 +1,10 @@
 /* SimpleApp.scala */
 
-import org.apache.spark.ml.feature.Word2Vec
-import org.apache.spark.SparkContext
-import org.apache.spark.sql.SparkSession
 import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.types.{StructType, StructField}
+import org.apache.spark.ml.feature.Word2Vec
 import java.io._
-
 
 import scala.xml._
 import scala.util.Try
@@ -39,12 +38,6 @@ object SimpleApp {
           this.ups + that.ups,
           this.downs + that.downs
         )
-      case (OutRecord(_, _, _), OutRecord(_, _, _)) =>
-        new OutRecord(
-          this.favs + that.favs,
-          this.ups + that.ups,
-          this.downs + that.downs
-        )
       case (UserRecord(_, _), UserRecord(_, _)) =>
         new UserRecord(
           this.userID,
@@ -57,40 +50,39 @@ object SimpleApp {
   case object EmptyRecord extends Record
 
 
-  case class PostRecord private(override val postID: String,
-                                override val favs: Int) extends Record {
-    def this(t: (String, Int)) = this(t._1, t._2)
-
-    def this(line: String) = this({
+  case class PostRecord(override val postID: String,
+                        override val favs: Int) extends Record
+  object PostRecord {
+    def apply(line: String) = {
       val elem = XML.loadString(line)
       val postID: String = elem \ "@Id" text
       val favs: Int = (elem \ "@FavoriteCount" text).toInt
-      val out = (postID, favs)
+      val out = new PostRecord(postID, favs)
       out
-    })
+    }
   }
-
 
   case class VoteRecord(override val postID: String,
                         override val ups: Int,
-                        override val downs: Int) extends Record {
-    def this(t: (String, Int, Int)) = this(t._1, t._2, t._3)
+                        override val downs: Int) extends Record
 
-    def this(line: String) = this({
+  case object VoteRecord extends Record {
+    def apply(line: String) = {
       val elem = XML.loadString(line)
 
       val postID = elem \ "@PostId" text
       val voteID = elem \ "@VoteTypeId" text
 
       if (voteID == "2") {
-        (postID, 1, 0)
+        val out = new VoteRecord(postID, 1, 0)
+        out
       } else if (voteID == "3") {
-        (postID, 0, 1)
+        val out = new VoteRecord(postID, 0, 1)
+        out
       } else {
         throw new java.util.InputMismatchException("Vote is not up/down vote.")
       }
-    })
-
+    }
   }
 
   case class UserRecord(override val userID: String,
@@ -138,8 +130,8 @@ object SimpleApp {
     */
   def recordParser(line: String, recordType: String): Record =
     recordType match {
-      case "post" => Try(new PostRecord(line)) getOrElse EmptyRecord
-      case "vote" => Try(new VoteRecord(line)) getOrElse EmptyRecord
+      case "post" => Try(PostRecord(line)) getOrElse EmptyRecord
+      case "vote" => Try(VoteRecord(line)) getOrElse EmptyRecord
       case _ => throw new java.util.InputMismatchException("incorrect")
     }
 
@@ -229,14 +221,14 @@ object SimpleApp {
     def parse: List[String] = {
       val elem = XML.loadString(line)
       val tags: List[String] = (elem \ "@Tags" text) split "><" toList
-      val out = (tags map (_ stripPrefix "<" stripSuffix ">"))
+      val out = (tags map (_ stripPrefix "<" stripSuffix ">" toLowerCase))
         .filter(_.length > 0)
       if (out != Nil) out else List()
     }
     Try(parse) getOrElse List()
   }
 
-  case class Tag(tags: Tuple1[List[String]])
+  case class Tag(tags: List[String])
 
   def synonyms(postsFile: String): Unit = {
 
@@ -248,20 +240,35 @@ object SimpleApp {
       .map(tagParser)
       .filter(_ != Nil)
 
-    if (SparkContextSingleton.debug) {
-      tagsRDD take 100 foreach println
-    }
+    lazy val rowRDD = tagsRDD
+        .map(t => Tag(t))
 
-    lazy val tagsDF = tagsRDD
-      .map(tags => Tag(Tuple1.apply(tags)))
+    lazy val tagsDF = rowRDD
       .toDF()
 
     if (SparkContextSingleton.debug) {
       tagsDF take 100 foreach println
     }
 
-  }
+    // Learn a mapping from words to Vectors.
+    val word2Vec = new Word2Vec()
+      .setInputCol("tags")
+      .setOutputCol("result")
+      .setVectorSize(100)
+      .setMinCount(0)
+    val model = word2Vec.fit(tagsDF)
+    val resultDF = model.findSynonyms("hadoop", 50)
 
+    if (SparkContextSingleton.debug) {
+      resultDF take 50 foreach println
+    }
+
+    outputWriter("tmp/hadoodSynonyms.csv",
+      resultDF take 50)({
+      r: Row => r(0) + "," + r(1) + ",\n"
+    })
+
+  }
 
 
   def main(args: Array[String]) {
@@ -300,7 +307,7 @@ object SimpleApp {
   /** Lazily instantiated singleton instance of SparkSession */
   object SparkSessionSingleton {
 
-    @transient  private var instance: SparkSession = _
+    @transient private var instance: SparkSession = _
 
     def getInstance(sparkConf: SparkConf): SparkSession = {
       if (instance == null) {
@@ -312,4 +319,5 @@ object SimpleApp {
       instance
     }
   }
+
 }
